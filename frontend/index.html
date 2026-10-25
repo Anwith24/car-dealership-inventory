@@ -1,0 +1,446 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AutoHub | Car Dealership</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f6fb;
+      color: #1e293b;
+    }
+    header {
+      background: #172554;
+      color: white;
+      padding: 22px 6%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    header h1 { margin: 0; font-size: 25px; }
+    main { max-width: 1100px; margin: 30px auto; padding: 0 18px; }
+    .panel {
+      background: white;
+      padding: 22px;
+      border-radius: 12px;
+      margin-bottom: 22px;
+      box-shadow: 0 3px 14px #17255412;
+    }
+    h2 { margin-top: 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+    }
+    input, select, button {
+      width: 100%;
+      padding: 11px;
+      border-radius: 7px;
+      border: 1px solid #cbd5e1;
+      font-size: 14px;
+    }
+    button {
+      background: #1d4ed8;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover { background: #1e40af; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+    .secondary { background: #475569; }
+    .danger { background: #b91c1c; }
+    .actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 12px; }
+    .actions button { width: auto; flex: 1; min-width: 90px; }
+    .vehicles {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .vehicle {
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 17px;
+    }
+    .vehicle h3 { margin: 0 0 8px; }
+    .price { font-size: 22px; font-weight: bold; color: #1d4ed8; }
+    .muted { color: #64748b; font-size: 14px; }
+    .hidden { display: none; }
+    #message { margin-bottom: 15px; font-weight: bold; }
+    .success { color: #15803d; }
+    .error { color: #b91c1c; }
+    footer { text-align: center; color: #64748b; padding: 25px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AutoHub</h1>
+    <div id="session">Not logged in</div>
+  </header>
+
+  <main>
+    <div id="message" role="status"></div>
+
+    <section class="panel" id="authPanel">
+      <h2>Welcome</h2>
+      <div class="grid">
+        <div>
+          <h3>Register</h3>
+          <form id="registerForm">
+            <input id="regUsername" placeholder="Username (3+ characters)"
+                   minlength="3" maxlength="50" required>
+            <br><br>
+            <input id="regPassword" type="password" placeholder="Password (8+ characters)"
+                   minlength="8" required>
+            <br><br>
+            <button type="submit">Create account</button>
+          </form>
+        </div>
+        <div>
+          <h3>Login</h3>
+          <form id="loginForm">
+            <input id="loginUsername" placeholder="Username" required>
+            <br><br>
+            <input id="loginPassword" type="password" placeholder="Password" required>
+            <br><br>
+            <button type="submit">Login</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Find your car</h2>
+      <form id="searchForm" class="grid">
+        <input id="searchMake" placeholder="Make, e.g. Toyota">
+        <input id="searchModel" placeholder="Model, e.g. Corolla">
+        <input id="searchCategory" placeholder="Category, e.g. Sedan">
+        <input id="minPrice" type="number" min="0" placeholder="Minimum price">
+        <input id="maxPrice" type="number" min="0" placeholder="Maximum price">
+        <button type="submit">Search inventory</button>
+        <button type="button" class="secondary" id="clearSearch">Clear filters</button>
+      </form>
+    </section>
+
+    <section class="panel hidden" id="adminPanel">
+      <h2>Admin — Add a vehicle</h2>
+      <form id="addForm" class="grid">
+        <input id="newMake" placeholder="Make" required>
+        <input id="newModel" placeholder="Model" required>
+        <input id="newCategory" placeholder="Category" required>
+        <input id="newPrice" type="number" min="0" step="0.01" placeholder="Price" required>
+        <input id="newQuantity" type="number" min="0" step="1" placeholder="Quantity" required>
+        <button type="submit">Add vehicle</button>
+      </form>
+      <p class="muted">Admin actions are shown only for admin accounts.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Vehicle inventory</h2>
+      <p id="count" class="muted"></p>
+      <div id="vehicles" class="vehicles"></div>
+    </section>
+  </main>
+
+  <footer>AutoHub · Car Dealership Inventory System</footer>
+
+  <script>
+    let token = sessionStorage.getItem("access_token") || "";
+    let role = sessionStorage.getItem("role") || "";
+
+    function showMessage(message, isError = false) {
+      const el = document.getElementById("message");
+      el.textContent = message;
+      el.className = isError ? "error" : "success";
+    }
+
+    function tokenRole(accessToken) {
+      try {
+        const payload = accessToken.split(".")[0];
+        const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const decoded = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+        return JSON.parse(decoded).role || "";
+      } catch {
+        return "";
+      }
+    }
+
+    async function api(path, options = {}) {
+      const headers = { ...(options.headers || {}) };
+      if (options.body) headers["Content-Type"] = "application/json";
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const response = await fetch(path, { ...options, headers });
+
+      if (response.status === 204) return null;
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.detail || `Request failed (${response.status})`);
+      }
+      return data;
+    }
+
+    function updateSession() {
+      document.getElementById("session").textContent =
+        token ? `Logged in · ${role}` : "Not logged in";
+
+      document.getElementById("authPanel").classList.toggle("hidden", Boolean(token));
+      document.getElementById("adminPanel").classList.toggle("hidden", role !== "admin");
+
+      if (token) {
+        let logout = document.getElementById("logoutButton");
+        if (!logout) {
+          logout = document.createElement("button");
+          logout.id = "logoutButton";
+          logout.textContent = "Logout";
+          logout.style.width = "auto";
+          logout.style.marginTop = "10px";
+          logout.onclick = () => {
+            token = "";
+            role = "";
+            sessionStorage.removeItem("access_token");
+            sessionStorage.removeItem("role");
+            updateSession();
+            loadVehicles();
+            showMessage("You have logged out.");
+          };
+          document.querySelector("header").appendChild(logout);
+        }
+        logout.classList.remove("hidden");
+      } else {
+        const logout = document.getElementById("logoutButton");
+        if (logout) logout.classList.add("hidden");
+      }
+    }
+
+    document.getElementById("registerForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      try {
+        await api("/api/auth/register", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.getElementById("regUsername").value.trim(),
+            password: document.getElementById("regPassword").value
+          })
+        });
+        showMessage("Account created. You can now log in.");
+        event.target.reset();
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    });
+
+    document.getElementById("loginForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      try {
+        const data = await api("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.getElementById("loginUsername").value.trim(),
+            password: document.getElementById("loginPassword").value
+          })
+        });
+        token = data.access_token;
+        role = tokenRole(token);
+        sessionStorage.setItem("access_token", token);
+        sessionStorage.setItem("role", role);
+        updateSession();
+        event.target.reset();
+        showMessage("Login successful.");
+        await loadVehicles();
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    });
+
+    async function loadVehicles(filters = {}) {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== "") params.set(key, value);
+      }
+
+      try {
+        const query = params.toString();
+        const vehicles = await api(
+          "/api/vehicles" + (query ? "/search?" + query : "")
+        );
+
+        document.getElementById("count").textContent =
+          `${vehicles.length} vehicle(s) found`;
+
+        const container = document.getElementById("vehicles");
+        container.replaceChildren();
+
+        if (vehicles.length === 0) {
+          container.textContent = "No vehicles match your search.";
+          return;
+        }
+
+        vehicles.forEach(vehicle => {
+          const card = document.createElement("article");
+          card.className = "vehicle";
+
+          const title = document.createElement("h3");
+          title.textContent = `${vehicle.make} ${vehicle.model}`;
+
+          const category = document.createElement("p");
+          category.className = "muted";
+          category.textContent = vehicle.category;
+
+          const price = document.createElement("p");
+          price.className = "price";
+          price.textContent = new Intl.NumberFormat("en-IN", {
+            style: "currency", currency: "INR", maximumFractionDigits: 2
+          }).format(vehicle.price);
+
+          const stock = document.createElement("p");
+          stock.textContent = `Available quantity: ${vehicle.quantity}`;
+
+          card.append(title, category, price, stock);
+
+          const actions = document.createElement("div");
+          actions.className = "actions";
+
+          const purchase = document.createElement("button");
+          purchase.textContent = vehicle.quantity > 0 ? "Purchase" : "Out of stock";
+          purchase.disabled = vehicle.quantity <= 0 || !token;
+          purchase.title = token ? "" : "Log in to purchase";
+          purchase.onclick = async () => {
+            try {
+              await api(`/api/vehicles/${vehicle.id}/purchase`, { method: "POST" });
+              showMessage("Purchase successful. Inventory updated.");
+              await loadVehicles(filters);
+            } catch (error) {
+              showMessage(error.message, true);
+            }
+          };
+          actions.appendChild(purchase);
+
+          if (role === "admin") {
+            const edit = document.createElement("button");
+            edit.className = "secondary";
+            edit.textContent = "Edit";
+            edit.onclick = async () => {
+              const make = prompt("Make:", vehicle.make);
+              if (make === null) return;
+              const model = prompt("Model:", vehicle.model);
+              if (model === null) return;
+              const categoryValue = prompt("Category:", vehicle.category);
+              if (categoryValue === null) return;
+              const priceValue = prompt("Price:", vehicle.price);
+              if (priceValue === null) return;
+              const quantityValue = prompt("Quantity:", vehicle.quantity);
+              if (quantityValue === null) return;
+
+              try {
+                await api(`/api/vehicles/${vehicle.id}`, {
+                  method: "PUT",
+                  body: JSON.stringify({
+                    make, model, category: categoryValue,
+                    price: Number(priceValue), quantity: Number(quantityValue)
+                  })
+                });
+                showMessage("Vehicle updated.");
+                await loadVehicles(filters);
+              } catch (error) {
+                showMessage(error.message, true);
+              }
+            };
+
+            const restock = document.createElement("button");
+            restock.className = "secondary";
+            restock.textContent = "Restock";
+            restock.onclick = async () => {
+              const amount = prompt("Quantity to add:", "1");
+              if (amount === null) return;
+              if (!Number.isInteger(Number(amount)) || Number(amount) <= 0) {
+                showMessage("Enter a positive whole number.", true);
+                return;
+              }
+              try {
+                await api(`/api/vehicles/${vehicle.id}/restock`, {
+                  method: "POST",
+                  body: JSON.stringify({ quantity: Number(amount) })
+                });
+                showMessage("Stock replenished.");
+                await loadVehicles(filters);
+              } catch (error) {
+                showMessage(error.message, true);
+              }
+            };
+
+            const remove = document.createElement("button");
+            remove.className = "danger";
+            remove.textContent = "Delete";
+            remove.onclick = async () => {
+              if (!confirm(`Delete ${vehicle.make} ${vehicle.model}?`)) return;
+              try {
+                await api(`/api/vehicles/${vehicle.id}`, { method: "DELETE" });
+                showMessage("Vehicle deleted.");
+                await loadVehicles(filters);
+              } catch (error) {
+                showMessage(error.message, true);
+              }
+            };
+
+            actions.append(edit, restock, remove);
+          }
+
+          card.appendChild(actions);
+          container.appendChild(card);
+        });
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    }
+
+    document.getElementById("searchForm").addEventListener("submit", event => {
+      event.preventDefault();
+      loadVehicles({
+        make: document.getElementById("searchMake").value.trim(),
+        model: document.getElementById("searchModel").value.trim(),
+        category: document.getElementById("searchCategory").value.trim(),
+        min_price: document.getElementById("minPrice").value,
+        max_price: document.getElementById("maxPrice").value
+      });
+    });
+
+    document.getElementById("clearSearch").addEventListener("click", () => {
+      document.getElementById("searchForm").reset();
+      loadVehicles();
+    });
+
+    document.getElementById("addForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      try {
+        await api("/api/vehicles", {
+          method: "POST",
+          body: JSON.stringify({
+            make: document.getElementById("newMake").value.trim(),
+            model: document.getElementById("newModel").value.trim(),
+            category: document.getElementById("newCategory").value.trim(),
+            price: Number(document.getElementById("newPrice").value),
+            quantity: Number(document.getElementById("newQuantity").value)
+          })
+        });
+        event.target.reset();
+        showMessage("Vehicle added.");
+        await loadVehicles();
+      } catch (error) {
+        showMessage(error.message, true);
+      }
+    });
+
+    updateSession();
+    loadVehicles();
+  </script>
+</body>
+</html>
